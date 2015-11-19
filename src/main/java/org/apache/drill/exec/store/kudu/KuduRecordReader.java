@@ -168,7 +168,7 @@ public class KuduRecordReader extends AbstractRecordReader {
       i++;
     }
   }
-  
+
   private void ensure(final int length) {
     buffer = buffer.reallocIfNeeded(length);
   }
