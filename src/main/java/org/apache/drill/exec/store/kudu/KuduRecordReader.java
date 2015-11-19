@@ -39,6 +39,7 @@ import org.kududb.ColumnSchema;
 import org.kududb.Type;
 import org.kududb.client.KuduClient;
 import org.kududb.client.KuduScanner;
+import org.kududb.client.KuduScanner.KuduScannerBuilder;
 import org.kududb.client.KuduTable;
 import org.kududb.client.RowResult;
 import org.kududb.client.RowResultIterator;
@@ -71,12 +72,16 @@ public class KuduRecordReader extends AbstractRecordReader {
   public void setup(OperatorContext context, OutputMutator output) throws ExecutionSetupException {
     try {
       KuduTable table = client.openTable(scanSpec.getTableName());
-      List<String> colNames = Lists.newArrayList();
-      for (SchemaPath p : this.getColumns()) {
-        colNames.add(p.getAsUnescapedPath());
+      
+      KuduScannerBuilder builder = client.newScannerBuilder(table);
+      if (!isStarQuery()) {
+        List<String> colNames = Lists.newArrayList();
+        for (SchemaPath p : this.getColumns()) {
+          colNames.add(p.getAsUnescapedPath());
+        }
+        builder.setProjectedColumnNames(colNames);
       }
-      scanner = client.newScannerBuilder(table)
-          .setProjectedColumnNames(colNames).build();
+      scanner = builder.build();
       containerWriter = new VectorContainerWriter(output);
       writer = containerWriter.rootAsMap();
     } catch (Exception e) {
