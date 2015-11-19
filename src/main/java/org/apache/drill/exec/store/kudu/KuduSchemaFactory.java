@@ -26,6 +26,8 @@ import org.apache.calcite.schema.Table;
 import org.apache.drill.exec.store.AbstractSchema;
 import org.apache.drill.exec.store.SchemaConfig;
 import org.apache.drill.exec.store.SchemaFactory;
+import org.kududb.Schema;
+import org.kududb.client.KuduTable;
 import org.kududb.client.ListTablesResponse;
 
 import com.google.common.collect.ImmutableList;
@@ -71,7 +73,15 @@ public class KuduSchemaFactory implements SchemaFactory {
     @Override
     public Table getTable(String name) {
       KuduScanSpec scanSpec = new KuduScanSpec(name);
-      return new DrillKuduTable(schemaName, plugin, scanSpec);
+      try {
+        KuduTable table = plugin.getClient().openTable(name);
+        Schema schema = table.getSchema();
+        return new DrillKuduTable(schemaName, plugin, schema, scanSpec);
+      } catch (Exception e) {
+        logger.warn("Failure while retrieving kudu table {}", name, e);
+        return null;
+      }
+
     }
 
     @Override
