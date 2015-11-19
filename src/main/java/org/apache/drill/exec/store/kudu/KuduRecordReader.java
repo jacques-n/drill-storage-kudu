@@ -102,7 +102,7 @@ public class KuduRecordReader extends AbstractRecordReader {
       while (iterator == null || !iterator.hasNext()) {
         if (!scanner.hasMoreRows()) {
           iterator = null;
-          break;
+          return 0;
         }
         iterator = scanner.nextRows();
       }
