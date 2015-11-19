@@ -23,6 +23,7 @@ import java.util.Set;
 
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.schema.Table;
+import org.apache.drill.common.exceptions.UserException;
 import org.apache.drill.exec.store.AbstractSchema;
 import org.apache.drill.exec.store.SchemaConfig;
 import org.apache.drill.exec.store.SchemaFactory;
@@ -93,6 +94,23 @@ public class KuduSchemaFactory implements SchemaFactory {
         logger.warn("Failure reading kudu tables.", e);
         return Collections.EMPTY_SET;
       }
+    }
+
+    @Override
+    public void dropTable(String tableName) {
+      try {
+        plugin.getClient().deleteTable(tableName);
+      } catch (Exception e) {
+        throw UserException.dataWriteError(e)
+            .message("Failure while trying to drop table '%s'.", tableName)
+            .addContext("plugin", name)
+            .build(logger);
+      }
+    }
+
+    @Override
+    public boolean isMutable() {
+      return true;
     }
 
     @Override
