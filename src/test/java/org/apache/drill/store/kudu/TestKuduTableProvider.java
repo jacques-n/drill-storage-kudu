@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.drill.kudu;
+package org.apache.drill.store.kudu;
 
 import static org.junit.Assert.assertEquals;
 

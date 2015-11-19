@@ -1,4 +1,4 @@
-package org.apache.drill.hbase;
+package org.apache.drill.store.kudu;
 
 import org.apache.drill.BaseTestQuery;
 import org.junit.Test;
