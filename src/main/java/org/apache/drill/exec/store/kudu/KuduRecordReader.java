@@ -140,6 +140,7 @@ public class KuduRecordReader extends AbstractRecordReader {
     return rowCount;
   }
   
+  @SuppressWarnings("unchecked")
   private void initCopiers(Schema schema) throws SchemaChangeException {
     ImmutableList.Builder<ValueVector> vectorBuilder = ImmutableList.builder();
     ImmutableList.Builder<Copier<?>> copierBuilder = ImmutableList.builder();
@@ -150,7 +151,6 @@ public class KuduRecordReader extends AbstractRecordReader {
       final String name = col.getName();
       final Type kuduType = col.getType();
       MajorType majorType = TYPES.get(kuduType);
-      MinorType minorType = majorType.getMinorType();
       if (majorType == null) {
         logger.warn("Ignoring column that is unsupported.", UserException
             .unsupportedError()
@@ -164,6 +164,7 @@ public class KuduRecordReader extends AbstractRecordReader {
 
         continue;
       }
+      MinorType minorType = majorType.getMinorType();
       MaterializedField field = MaterializedField.create(name, majorType);
       final Class<? extends ValueVector> clazz = (Class<? extends ValueVector>) TypeHelper.getValueVectorClass(
           minorType, majorType.getMode());
