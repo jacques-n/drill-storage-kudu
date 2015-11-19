@@ -7,6 +7,6 @@ public class TestKuduPlugin extends BaseTestQuery {
 
   @Test
   public void testBasicQuery() throws Exception {
-    test("select * from sys.options;");
+    test("select * from kudu.demo;");
   }
 }

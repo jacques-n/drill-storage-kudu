@@ -18,49 +18,15 @@
 package org.apache.drill.exec.store.kudu;
 
 
-import org.apache.hadoop.kudu.HConstants;
-import org.apache.hadoop.kudu.filter.Filter;
-import org.apache.hadoop.kudu.util.Bytes;
-
 import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 public class KuduScanSpec {
 
-  protected String tableName;
-  protected byte[] startRow;
-  protected byte[] stopRow;
-
-  protected Filter filter;
+  private final String tableName;
 
   @JsonCreator
-  public KuduScanSpec(@JsonProperty("tableName") String tableName,
-                       @JsonProperty("startRow") byte[] startRow,
-                       @JsonProperty("stopRow") byte[] stopRow,
-                       @JsonProperty("serializedFilter") byte[] serializedFilter,
-                       @JsonProperty("filterString") String filterString) {
-    if (serializedFilter != null && filterString != null) {
-      throw new IllegalArgumentException("The parameters 'serializedFilter' or 'filterString' cannot be specified at the same time.");
-    }
-    this.tableName = tableName;
-    this.startRow = startRow;
-    this.stopRow = stopRow;
-    if (filterString != null) {
-      this.filter = KuduUtils.parseFilterString(filterString);
-    } else {
-      this.filter = KuduUtils.deserializeFilter(serializedFilter);
-    }
-  }
-
-  public KuduScanSpec(String tableName, byte[] startRow, byte[] stopRow, Filter filter) {
-    this.tableName = tableName;
-    this.startRow = startRow;
-    this.stopRow = stopRow;
-    this.filter = filter;
-  }
-
-  public KuduScanSpec(String tableName) {
+  public KuduScanSpec(@JsonProperty("tableName") String tableName) {
     this.tableName = tableName;
   }
 
@@ -68,30 +34,5 @@ public class KuduScanSpec {
     return tableName;
   }
 
-  public byte[] getStartRow() {
-    return startRow == null ? HConstants.EMPTY_START_ROW : startRow;
-  }
-
-  public byte[] getStopRow() {
-    return stopRow == null ? HConstants.EMPTY_START_ROW : stopRow;
-  }
-
-  @JsonIgnore
-  public Filter getFilter() {
-    return this.filter;
-  }
-
-  public byte[] getSerializedFilter() {
-    return (this.filter != null) ? KuduUtils.serializeFilter(this.filter) : null;
-  }
-
-  @Override
-  public String toString() {
-    return "KuduScanSpec [tableName=" + tableName
-        + ", startRow=" + (startRow == null ? null : Bytes.toStringBinary(startRow))
-        + ", stopRow=" + (stopRow == null ? null : Bytes.toStringBinary(stopRow))
-        + ", filter=" + (filter == null ? null : filter.toString())
-        + "]";
-  }
 
 }

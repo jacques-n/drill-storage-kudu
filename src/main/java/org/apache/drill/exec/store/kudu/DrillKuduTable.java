@@ -17,50 +17,20 @@
  */
 package org.apache.drill.exec.store.kudu;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Set;
-
-import org.apache.drill.common.exceptions.UserException;
-import org.apache.drill.exec.planner.logical.DrillTable;
-import org.apache.hadoop.kudu.HTableDescriptor;
-import org.apache.hadoop.kudu.client.KuduAdmin;
-import org.apache.hadoop.kudu.util.Bytes;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
-import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.drill.exec.planner.logical.DynamicDrillTable;
 
-public class DrillKuduTable extends DrillTable implements DrillKuduConstants {
+public class DrillKuduTable extends DynamicDrillTable {
   private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(DrillKuduTable.class);
 
-  private HTableDescriptor table;
-
   public DrillKuduTable(String storageEngineName, KuduStoragePlugin plugin, KuduScanSpec scanSpec) {
-    super(storageEngineName, plugin, scanSpec);
-    try(KuduAdmin admin = new KuduAdmin(plugin.getConfig().getKuduConf())) {
-      table = admin.getTableDescriptor(KuduUtils.getBytes(scanSpec.getTableName()));
-    } catch (IOException e) {
-      throw UserException.dataReadError()
-          .message("Failure while loading table %s in database %s.", scanSpec.getTableName(), storageEngineName)
-          .addContext("Message: ", e.getMessage())
-          .build(logger);
-    }
+    super(plugin, storageEngineName, scanSpec);
   }
 
   @Override
   public RelDataType getRowType(RelDataTypeFactory typeFactory) {
-    ArrayList<RelDataType> typeList = new ArrayList<>();
-    ArrayList<String> fieldNameList = new ArrayList<>();
-
-    fieldNameList.add(ROW_KEY);
-    typeList.add(typeFactory.createSqlType(SqlTypeName.ANY));
-
-    Set<byte[]> families = table.getFamiliesKeys();
-    for (byte[] family : families) {
-      fieldNameList.add(Bytes.toString(family));
-      typeList.add(typeFactory.createMapType(typeFactory.createSqlType(SqlTypeName.VARCHAR), typeFactory.createSqlType(SqlTypeName.ANY)));
-    }
-    return typeFactory.createStructType(typeList, fieldNameList);
+    return super.getRowType(typeFactory);
   }
 
 }

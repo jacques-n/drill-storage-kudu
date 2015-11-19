@@ -18,20 +18,20 @@
 package org.apache.drill.exec.store.kudu;
 
 import java.io.IOException;
+import java.util.Collections;
 import java.util.Set;
 
 import org.apache.calcite.schema.SchemaPlus;
-
 import org.apache.drill.common.JSONOptions;
 import org.apache.drill.exec.ops.OptimizerRulesContext;
 import org.apache.drill.exec.server.DrillbitContext;
 import org.apache.drill.exec.store.AbstractStoragePlugin;
 import org.apache.drill.exec.store.SchemaConfig;
 import org.apache.drill.exec.store.StoragePluginOptimizerRule;
+import org.kududb.client.KuduClient;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.collect.ImmutableSet;
 
 public class KuduStoragePlugin extends AbstractStoragePlugin {
   static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(KuduStoragePlugin.class);
@@ -42,6 +42,7 @@ public class KuduStoragePlugin extends AbstractStoragePlugin {
 
   @SuppressWarnings("unused")
   private final String name;
+  private final KuduClient client;
 
   public KuduStoragePlugin(KuduStoragePluginConfig configuration, DrillbitContext context, String name)
       throws IOException {
@@ -49,6 +50,21 @@ public class KuduStoragePlugin extends AbstractStoragePlugin {
     this.schemaFactory = new KuduSchemaFactory(this, name);
     this.engineConfig = configuration;
     this.name = name;
+    this.client = new KuduClient.KuduClientBuilder(configuration.getMasterAddresses()).build();
+  }
+
+  @Override
+  public void start() throws IOException {
+
+  }
+
+  public KuduClient getClient() {
+    return client;
+  }
+
+  @Override
+  public void close() throws Exception {
+    client.close();
   }
 
   public DrillbitContext getContext() {
@@ -63,7 +79,7 @@ public class KuduStoragePlugin extends AbstractStoragePlugin {
   @Override
   public KuduGroupScan getPhysicalScan(String userName, JSONOptions selection) throws IOException {
     KuduScanSpec scanSpec = selection.getListWith(new ObjectMapper(), new TypeReference<KuduScanSpec>() {});
-    return new KuduGroupScan(userName, this, scanSpec, null);
+    return new KuduGroupScan(this, scanSpec, null);
   }
 
   @Override
@@ -78,6 +94,6 @@ public class KuduStoragePlugin extends AbstractStoragePlugin {
 
   @Override
   public Set<StoragePluginOptimizerRule> getOptimizerRules(OptimizerRulesContext optimizerRulesContext) {
-    return ImmutableSet.of(KuduPushFilterIntoScan.FILTER_ON_SCAN, KuduPushFilterIntoScan.FILTER_ON_PROJECT);
+    return Collections.EMPTY_SET;
   }
 }

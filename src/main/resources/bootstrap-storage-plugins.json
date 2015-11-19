@@ -2,11 +2,8 @@
   "storage":{
     kudu : {
       type:"kudu",
-      enabled: false,
-      config : {
-        "hbase.zookeeper.quorum" : "localhost",
-        "hbase.zookeeper.property.clientPort" : 2181
-      }
+      masterAddresses: "172.31.1.99",
+      enabled: true
     }
   }
 }

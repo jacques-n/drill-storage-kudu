@@ -40,12 +40,13 @@ public class KuduScanBatchCreator implements BatchCreator<KuduSubScan>{
     Preconditions.checkArgument(children.isEmpty());
     List<RecordReader> readers = Lists.newArrayList();
     List<SchemaPath> columns = null;
-    for(KuduSubScan.KuduSubScanSpec scanSpec : subScan.getRegionScanSpecList()){
+
+    for (KuduSubScan.KuduSubScanSpec scanSpec : subScan.getTabletScanSpecList()) {
       try {
         if ((columns = subScan.getColumns())==null) {
           columns = GroupScan.ALL_COLUMNS;
         }
-        readers.add(new KuduRecordReader(subScan.getStorageConfig().getKuduConf(), scanSpec, columns, context));
+        readers.add(new KuduRecordReader(subScan.getStorageEngine().getClient(), scanSpec, columns, context));
       } catch (Exception e1) {
         throw new ExecutionSetupException(e1);
       }

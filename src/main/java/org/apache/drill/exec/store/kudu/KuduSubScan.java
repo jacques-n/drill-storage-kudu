@@ -30,8 +30,6 @@ import org.apache.drill.exec.physical.base.PhysicalVisitor;
 import org.apache.drill.exec.physical.base.SubScan;
 import org.apache.drill.exec.proto.UserBitShared.CoreOperatorType;
 import org.apache.drill.exec.store.StoragePluginRegistry;
-import org.apache.hadoop.kudu.filter.Filter;
-import org.apache.hadoop.kudu.util.Bytes;
 
 import com.fasterxml.jackson.annotation.JacksonInject;
 import com.fasterxml.jackson.annotation.JsonCreator;
@@ -41,42 +39,42 @@ import com.fasterxml.jackson.annotation.JsonTypeName;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Iterators;
 
-// Class containing information for reading a single Kudu region
-@JsonTypeName("kudu-region-scan")
+// Class containing information for reading a single Kudu tablet
+@JsonTypeName("kudu-tablet-scan")
 public class KuduSubScan extends AbstractBase implements SubScan {
   static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(KuduSubScan.class);
 
   @JsonProperty
   public final KuduStoragePluginConfig storage;
-  @JsonIgnore
+
+
   private final KuduStoragePlugin kuduStoragePlugin;
-  private final List<KuduSubScanSpec> regionScanSpecList;
+  private final List<KuduSubScanSpec> tabletScanSpecList;
   private final List<SchemaPath> columns;
 
   @JsonCreator
   public KuduSubScan(@JacksonInject StoragePluginRegistry registry,
-                      @JsonProperty("userName") String userName,
                       @JsonProperty("storage") StoragePluginConfig storage,
-                      @JsonProperty("regionScanSpecList") LinkedList<KuduSubScanSpec> regionScanSpecList,
+      @JsonProperty("tabletScanSpecList") LinkedList<KuduSubScanSpec> tabletScanSpecList,
                       @JsonProperty("columns") List<SchemaPath> columns) throws ExecutionSetupException {
-    super(userName);
+    super((String) null);
     kuduStoragePlugin = (KuduStoragePlugin) registry.getPlugin(storage);
-    this.regionScanSpecList = regionScanSpecList;
+    this.tabletScanSpecList = tabletScanSpecList;
     this.storage = (KuduStoragePluginConfig) storage;
     this.columns = columns;
   }
 
-  public KuduSubScan(String userName, KuduStoragePlugin plugin, KuduStoragePluginConfig config,
-      List<KuduSubScanSpec> regionInfoList, List<SchemaPath> columns) {
-    super(userName);
+  public KuduSubScan(KuduStoragePlugin plugin, KuduStoragePluginConfig config,
+      List<KuduSubScanSpec> tabletInfoList, List<SchemaPath> columns) {
+    super((String) null);
     kuduStoragePlugin = plugin;
     storage = config;
-    this.regionScanSpecList = regionInfoList;
+    this.tabletScanSpecList = tabletInfoList;
     this.columns = columns;
   }
 
-  public List<KuduSubScanSpec> getRegionScanSpecList() {
-    return regionScanSpecList;
+  public List<KuduSubScanSpec> getTabletScanSpecList() {
+    return tabletScanSpecList;
   }
 
   @JsonIgnore
@@ -106,7 +104,7 @@ public class KuduSubScan extends AbstractBase implements SubScan {
   @Override
   public PhysicalOperator getNewWithChildren(List<PhysicalOperator> children) {
     Preconditions.checkArgument(children.isEmpty());
-    return new KuduSubScan(getUserName(), kuduStoragePlugin, storage, regionScanSpecList, columns);
+    return new KuduSubScan(kuduStoragePlugin, storage, tabletScanSpecList, columns);
   }
 
   @Override
@@ -116,99 +114,15 @@ public class KuduSubScan extends AbstractBase implements SubScan {
 
   public static class KuduSubScanSpec {
 
-    protected String tableName;
-    protected String regionServer;
-    protected byte[] startRow;
-    protected byte[] stopRow;
-    protected byte[] serializedFilter;
+    private final String tableName;
 
     @JsonCreator
-    public KuduSubScanSpec(@JsonProperty("tableName") String tableName,
-                            @JsonProperty("regionServer") String regionServer,
-                            @JsonProperty("startRow") byte[] startRow,
-                            @JsonProperty("stopRow") byte[] stopRow,
-                            @JsonProperty("serializedFilter") byte[] serializedFilter,
-                            @JsonProperty("filterString") String filterString) {
-      if (serializedFilter != null && filterString != null) {
-        throw new IllegalArgumentException("The parameters 'serializedFilter' or 'filterString' cannot be specified at the same time.");
-      }
+    public KuduSubScanSpec(@JsonProperty("tableName") String tableName) {
       this.tableName = tableName;
-      this.regionServer = regionServer;
-      this.startRow = startRow;
-      this.stopRow = stopRow;
-      if (serializedFilter != null) {
-        this.serializedFilter = serializedFilter;
-      } else {
-        this.serializedFilter = KuduUtils.serializeFilter(KuduUtils.parseFilterString(filterString));
-      }
-    }
-
-    /* package */ KuduSubScanSpec() {
-      // empty constructor, to be used with builder pattern;
-    }
-
-    @JsonIgnore
-    private Filter scanFilter;
-    public Filter getScanFilter() {
-      if (scanFilter == null &&  serializedFilter != null) {
-          scanFilter = KuduUtils.deserializeFilter(serializedFilter);
-      }
-      return scanFilter;
     }
 
     public String getTableName() {
       return tableName;
-    }
-
-    public KuduSubScanSpec setTableName(String tableName) {
-      this.tableName = tableName;
-      return this;
-    }
-
-    public String getRegionServer() {
-      return regionServer;
-    }
-
-    public KuduSubScanSpec setRegionServer(String regionServer) {
-      this.regionServer = regionServer;
-      return this;
-    }
-
-    public byte[] getStartRow() {
-      return startRow;
-    }
-
-    public KuduSubScanSpec setStartRow(byte[] startRow) {
-      this.startRow = startRow;
-      return this;
-    }
-
-    public byte[] getStopRow() {
-      return stopRow;
-    }
-
-    public KuduSubScanSpec setStopRow(byte[] stopRow) {
-      this.stopRow = stopRow;
-      return this;
-    }
-
-    public byte[] getSerializedFilter() {
-      return serializedFilter;
-    }
-
-    public KuduSubScanSpec setSerializedFilter(byte[] serializedFilter) {
-      this.serializedFilter = serializedFilter;
-      this.scanFilter = null;
-      return this;
-    }
-
-    @Override
-    public String toString() {
-      return "KuduScanSpec [tableName=" + tableName
-          + ", startRow=" + (startRow == null ? null : Bytes.toStringBinary(startRow))
-          + ", stopRow=" + (stopRow == null ? null : Bytes.toStringBinary(stopRow))
-          + ", filter=" + (getScanFilter() == null ? null : getScanFilter().toString())
-          + ", regionServer=" + regionServer + "]";
     }
 
   }

@@ -21,15 +21,12 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.Set;
 
-import org.apache.calcite.schema.Schema;
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.schema.Table;
-
 import org.apache.drill.exec.store.AbstractSchema;
 import org.apache.drill.exec.store.SchemaConfig;
 import org.apache.drill.exec.store.SchemaFactory;
-import org.apache.hadoop.kudu.HTableDescriptor;
-import org.apache.hadoop.kudu.client.KuduAdmin;
+import org.kududb.client.ListTablesResponse;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
@@ -47,14 +44,14 @@ public class KuduSchemaFactory implements SchemaFactory {
 
   @Override
   public void registerSchemas(SchemaConfig schemaConfig, SchemaPlus parent) throws IOException {
-    KuduSchema schema = new KuduSchema(schemaName);
+    KuduTables schema = new KuduTables(schemaName);
     SchemaPlus hPlus = parent.add(schemaName, schema);
     schema.setHolder(hPlus);
   }
 
-  class KuduSchema extends AbstractSchema {
+  class KuduTables extends AbstractSchema {
 
-    public KuduSchema(String name) {
+    public KuduTables(String name) {
       super(ImmutableList.<String>of(), name);
     }
 
@@ -79,16 +76,12 @@ public class KuduSchemaFactory implements SchemaFactory {
 
     @Override
     public Set<String> getTableNames() {
-      try(KuduAdmin admin = new KuduAdmin(plugin.getConfig().getKuduConf())) {
-        HTableDescriptor[] tables = admin.listTables();
-        Set<String> tableNames = Sets.newHashSet();
-        for (HTableDescriptor table : tables) {
-          tableNames.add(new String(table.getName()));
-        }
-        return tableNames;
+      try {
+        ListTablesResponse tablesList = plugin.getClient().getTablesList();
+        return Sets.newHashSet(tablesList.getTablesList());
       } catch (Exception e) {
-        logger.warn("Failure while loading table names for database '{}'.", schemaName, e.getCause());
-        return Collections.emptySet();
+        logger.warn("Failure reading kudu tables.", e);
+        return Collections.EMPTY_SET;
       }
     }
 

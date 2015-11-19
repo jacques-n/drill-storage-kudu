@@ -17,255 +17,162 @@
  */
 package org.apache.drill.exec.store.kudu;
 
-import java.io.IOException;
-import java.util.Collection;
-import java.util.HashMap;
+import io.netty.buffer.DrillBuf;
+
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.TimeUnit;
 
-import org.apache.drill.common.exceptions.DrillRuntimeException;
 import org.apache.drill.common.exceptions.ExecutionSetupException;
-import org.apache.drill.common.expression.PathSegment;
-import org.apache.drill.common.expression.PathSegment.NameSegment;
 import org.apache.drill.common.expression.SchemaPath;
-import org.apache.drill.exec.exception.SchemaChangeException;
+import org.apache.drill.common.types.TypeProtos.MajorType;
+import org.apache.drill.common.types.TypeProtos.MinorType;
+import org.apache.drill.common.types.Types;
 import org.apache.drill.exec.ops.FragmentContext;
 import org.apache.drill.exec.ops.OperatorContext;
-import org.apache.drill.exec.ops.OperatorStats;
 import org.apache.drill.exec.physical.impl.OutputMutator;
-import org.apache.drill.exec.record.MaterializedField;
 import org.apache.drill.exec.store.AbstractRecordReader;
-import org.apache.drill.exec.vector.NullableVarBinaryVector;
-import org.apache.drill.exec.vector.ValueVector;
-import org.apache.drill.exec.vector.VarBinaryVector;
-import org.apache.drill.exec.vector.complex.MapVector;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.kudu.Cell;
-import org.apache.hadoop.kudu.HConstants;
-import org.apache.hadoop.kudu.client.HTable;
-import org.apache.hadoop.kudu.client.Result;
-import org.apache.hadoop.kudu.client.ResultScanner;
-import org.apache.hadoop.kudu.client.Scan;
-import org.apache.hadoop.kudu.filter.FirstKeyOnlyFilter;
+import org.apache.drill.exec.store.kudu.KuduSubScan.KuduSubScanSpec;
+import org.apache.drill.exec.vector.complex.impl.VectorContainerWriter;
+import org.apache.drill.exec.vector.complex.writer.BaseWriter.MapWriter;
+import org.kududb.ColumnSchema;
+import org.kududb.Type;
+import org.kududb.client.KuduClient;
+import org.kududb.client.KuduScanner;
+import org.kududb.client.KuduTable;
+import org.kududb.client.RowResult;
+import org.kududb.client.RowResultIterator;
+import org.kududb.client.shaded.com.google.common.collect.ImmutableMap;
 
-import com.google.common.base.Preconditions;
-import com.google.common.base.Stopwatch;
-import com.google.common.collect.Sets;
-
-public class KuduRecordReader extends AbstractRecordReader implements DrillKuduConstants {
+public class KuduRecordReader extends AbstractRecordReader {
   private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(KuduRecordReader.class);
 
   private static final int TARGET_RECORD_COUNT = 4000;
 
-  private OutputMutator outputMutator;
+  private final KuduClient client;
+  private final KuduSubScanSpec scanSpec;
+  private KuduTable table;
+  private VectorContainerWriter containerWriter;
+  private MapWriter writer;
+  private KuduScanner scanner;
+  private RowResultIterator iterator;
+  private DrillBuf buffer;
 
-  private Map<String, MapVector> familyVectorMap;
-  private VarBinaryVector rowKeyVector;
-
-  private HTable hTable;
-  private ResultScanner resultScanner;
-
-  private String kuduTableName;
-  private Scan kuduScan;
-  private Configuration kuduConf;
-  private OperatorContext operatorContext;
-
-  private boolean rowKeyOnly;
-
-  public KuduRecordReader(Configuration conf, KuduSubScan.KuduSubScanSpec subScanSpec,
+  public KuduRecordReader(KuduClient client, KuduSubScan.KuduSubScanSpec subScanSpec,
       List<SchemaPath> projectedColumns, FragmentContext context) {
-    kuduConf = conf;
-    kuduTableName = Preconditions.checkNotNull(subScanSpec, "Kudu reader needs a sub-scan spec").getTableName();
-    kuduScan = new Scan(subScanSpec.getStartRow(), subScanSpec.getStopRow());
-    kuduScan
-        .setFilter(subScanSpec.getScanFilter())
-        .setCaching(TARGET_RECORD_COUNT);
-
     setColumns(projectedColumns);
-  }
-
-  @Override
-  protected Collection<SchemaPath> transformColumns(Collection<SchemaPath> columns) {
-    Set<SchemaPath> transformed = Sets.newLinkedHashSet();
-    rowKeyOnly = true;
-    if (!isStarQuery()) {
-      for (SchemaPath column : columns) {
-        if (column.getRootSegment().getPath().equalsIgnoreCase(ROW_KEY)) {
-          transformed.add(ROW_KEY_PATH);
-          continue;
-        }
-        rowKeyOnly = false;
-        NameSegment root = column.getRootSegment();
-        byte[] family = root.getPath().getBytes();
-        transformed.add(SchemaPath.getSimplePath(root.getPath()));
-        PathSegment child = root.getChild();
-        if (child != null && child.isNamed()) {
-          byte[] qualifier = child.getNameSegment().getPath().getBytes();
-          kuduScan.addColumn(family, qualifier);
-        } else {
-          kuduScan.addFamily(family);
-        }
-      }
-      /* if only the row key was requested, add a FirstKeyOnlyFilter to the scan
-       * to fetch only one KV from each row. If a filter is already part of this
-       * scan, add the FirstKeyOnlyFilter as the LAST filter of a MUST_PASS_ALL
-       * FilterList.
-       */
-      if (rowKeyOnly) {
-        kuduScan.setFilter(
-            KuduUtils.andFilterAtIndex(kuduScan.getFilter(), KuduUtils.LAST_FILTER, new FirstKeyOnlyFilter()));
-      }
-    } else {
-      rowKeyOnly = false;
-      transformed.add(ROW_KEY_PATH);
-    }
-
-
-    return transformed;
+    this.client = client;
+    buffer = context.getManagedBuffer();
+    scanSpec = subScanSpec;
   }
 
   @Override
   public void setup(OperatorContext context, OutputMutator output) throws ExecutionSetupException {
-    this.operatorContext = context;
-    this.outputMutator = output;
-    familyVectorMap = new HashMap<String, MapVector>();
-
     try {
-      // Add Vectors to output in the order specified when creating reader
-      for (SchemaPath column : getColumns()) {
-        if (column.equals(ROW_KEY_PATH)) {
-          MaterializedField field = MaterializedField.create(column, ROW_KEY_TYPE);
-          rowKeyVector = outputMutator.addField(field, VarBinaryVector.class);
-        } else {
-          getOrCreateFamilyVector(column.getRootSegment().getPath(), false);
-        }
-      }
-      logger.debug("Opening scanner for Kudu table '{}', Zookeeper quorum '{}', port '{}', znode '{}'.",
-          kuduTableName, kuduConf.get(HConstants.ZOOKEEPER_QUORUM),
-          kuduConf.get(HBASE_ZOOKEEPER_PORT), kuduConf.get(HConstants.ZOOKEEPER_ZNODE_PARENT));
-      hTable = new HTable(kuduConf, kuduTableName);
-      resultScanner = hTable.getScanner(kuduScan);
-    } catch (SchemaChangeException | IOException e) {
+      KuduTable table = client.openTable(scanSpec.getTableName());
+      scanner = client.newScannerBuilder(table).build();
+      containerWriter = new VectorContainerWriter(output);
+      writer = containerWriter.rootAsMap();
+    } catch (Exception e) {
       throw new ExecutionSetupException(e);
     }
   }
 
+  static final Map<Type, MajorType> TYPES;
+
+  static {
+    TYPES = ImmutableMap.<Type, MajorType> builder()
+        .put(Type.BINARY, Types.optional(MinorType.VARBINARY))
+        .put(Type.BOOL, Types.optional(MinorType.BIT))
+        .put(Type.DOUBLE, Types.optional(MinorType.FLOAT8))
+        .put(Type.FLOAT, Types.optional(MinorType.FLOAT4))
+        .put(Type.INT16, Types.optional(MinorType.INT))
+        .put(Type.INT32, Types.optional(MinorType.INT))
+        .put(Type.INT8, Types.optional(MinorType.INT))
+        .put(Type.INT64, Types.optional(MinorType.BIGINT))
+        .put(Type.STRING, Types.optional(MinorType.VARCHAR))
+        .put(Type.TIMESTAMP, Types.optional(MinorType.TIMESTAMP))
+        .build();
+  }
+
   @Override
   public int next() {
-    Stopwatch watch = new Stopwatch();
-    watch.start();
-    if (rowKeyVector != null) {
-      rowKeyVector.clear();
-      rowKeyVector.allocateNew();
-    }
-    for (ValueVector v : familyVectorMap.values()) {
-      v.clear();
-      v.allocateNew();
-    }
-
     int rowCount = 0;
-    done:
-    for (; rowCount < TARGET_RECORD_COUNT; rowCount++) {
-      Result result = null;
-      final OperatorStats operatorStats = operatorContext == null ? null : operatorContext.getStats();
-      try {
-        if (operatorStats != null) {
-          operatorStats.startWait();
+    try {
+      while (iterator == null || !iterator.hasNext()) {
+        if (!scanner.hasMoreRows()) {
+          iterator = null;
+          break;
         }
-        try {
-          result = resultScanner.next();
-        } finally {
-          if (operatorStats != null) {
-            operatorStats.stopWait();
+        iterator = scanner.nextRows();
+
+        for (; rowCount < 4095 && iterator.hasNext(); rowCount++) {
+          writer.setPosition(rowCount);
+          RowResult result = iterator.next();
+          int i = 0;
+          for (ColumnSchema column : result.getColumnProjection().getColumns()) {
+            switch (column.getType()) {
+            case STRING: {
+              final ByteBuffer buf = result.getBinary(i);
+              final int length = buf.remaining();
+              ensure(length);
+              buffer.setBytes(0, buf);
+              writer.varChar(column.getName()).writeVarChar(0, length, buffer);
+              break;
+            }
+            case BINARY: {
+              final ByteBuffer buf = result.getBinary(i);
+              final int length = buf.remaining();
+              ensure(length);
+              buffer.setBytes(0, buf);
+              writer.varBinary(column.getName()).writeVarBinary(0, length, buffer);
+              break;
+            }
+            case INT8:
+              writer.integer(column.getName()).writeInt(result.getByte(i));
+              break;
+            case INT16:
+              writer.integer(column.getName()).writeInt(result.getShort(i));
+              break;
+            case INT32:
+              writer.integer(column.getName()).writeInt(result.getInt(i));
+              break;
+            case INT64:
+              writer.bigInt(column.getName()).writeBigInt(result.getLong(i));
+              break;
+            case FLOAT:
+              writer.float4(column.getName()).writeFloat4(result.getFloat(i));
+              break;
+            case DOUBLE:
+              writer.float8(column.getName()).writeFloat8(result.getDouble(i));
+              break;
+            case BOOL:
+              writer.bit(column.getName()).writeBit(result.getBoolean(i) ? 1 : 0);
+              break;
+            case TIMESTAMP:
+              writer.timeStamp(column.getName()).writeTimeStamp(result.getLong(i) / 1000);
+              break;
+            default:
+              throw new UnsupportedOperationException("unsupported type " + column.getType());
+            }
+
+            i++;
           }
         }
-      } catch (IOException e) {
-        throw new DrillRuntimeException(e);
       }
-      if (result == null) {
-        break done;
-      }
-
-      // parse the result and populate the value vectors
-      Cell[] cells = result.rawCells();
-      if (rowKeyVector != null) {
-        rowKeyVector.getMutator().setSafe(rowCount, cells[0].getRowArray(), cells[0].getRowOffset(), cells[0].getRowLength());
-      }
-      if (!rowKeyOnly) {
-        for (final Cell cell : cells) {
-          final int familyOffset = cell.getFamilyOffset();
-          final int familyLength = cell.getFamilyLength();
-          final byte[] familyArray = cell.getFamilyArray();
-          final MapVector mv = getOrCreateFamilyVector(new String(familyArray, familyOffset, familyLength), true);
-
-          final int qualifierOffset = cell.getQualifierOffset();
-          final int qualifierLength = cell.getQualifierLength();
-          final byte[] qualifierArray = cell.getQualifierArray();
-          final NullableVarBinaryVector v = getOrCreateColumnVector(mv, new String(qualifierArray, qualifierOffset, qualifierLength));
-
-          final int valueOffset = cell.getValueOffset();
-          final int valueLength = cell.getValueLength();
-          final byte[] valueArray = cell.getValueArray();
-          v.getMutator().setSafe(rowCount, valueArray, valueOffset, valueLength);
-        }
-      }
+    } catch (Exception ex) {
+      throw new RuntimeException(ex);
     }
-
-    setOutputRowCount(rowCount);
-    logger.debug("Took {} ms to get {} records", watch.elapsed(TimeUnit.MILLISECONDS), rowCount);
+    containerWriter.setValueCount(rowCount);
     return rowCount;
   }
 
-  private MapVector getOrCreateFamilyVector(String familyName, boolean allocateOnCreate) {
-    try {
-      MapVector v = familyVectorMap.get(familyName);
-      if(v == null) {
-        SchemaPath column = SchemaPath.getSimplePath(familyName);
-        MaterializedField field = MaterializedField.create(column, COLUMN_FAMILY_TYPE);
-        v = outputMutator.addField(field, MapVector.class);
-        if (allocateOnCreate) {
-          v.allocateNew();
-        }
-        getColumns().add(column);
-        familyVectorMap.put(familyName, v);
-      }
-      return v;
-    } catch (SchemaChangeException e) {
-      throw new DrillRuntimeException(e);
-    }
-  }
-
-  private NullableVarBinaryVector getOrCreateColumnVector(MapVector mv, String qualifier) {
-    int oldSize = mv.size();
-    NullableVarBinaryVector v = mv.addOrGet(qualifier, COLUMN_TYPE, NullableVarBinaryVector.class);
-    if (oldSize != mv.size()) {
-      v.allocateNew();
-    }
-    return v;
+  private void ensure(final int length) {
+    buffer = buffer.reallocIfNeeded(length);
   }
 
   @Override
   public void close() {
-    try {
-      if (resultScanner != null) {
-        resultScanner.close();
-      }
-      if (hTable != null) {
-        hTable.close();
-      }
-    } catch (IOException e) {
-      logger.warn("Failure while closing Kudu table: " + kuduTableName, e);
-    }
   }
 
-  private void setOutputRowCount(int count) {
-    for (ValueVector vv : familyVectorMap.values()) {
-      vv.getMutator().setValueCount(count);
-    }
-    if (rowKeyVector != null) {
-      rowKeyVector.getMutator().setValueCount(count);
-    }
-  }
 }
