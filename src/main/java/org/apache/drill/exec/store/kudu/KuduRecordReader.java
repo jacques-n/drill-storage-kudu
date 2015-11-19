@@ -108,9 +108,9 @@ public class KuduRecordReader extends AbstractRecordReader {
         .put(Type.BOOL, Types.optional(MinorType.BIT))
         .put(Type.DOUBLE, Types.optional(MinorType.FLOAT8))
         .put(Type.FLOAT, Types.optional(MinorType.FLOAT4))
-        .put(Type.INT16, Types.optional(MinorType.INT))
+        .put(Type.INT8, Types.optional(MinorType.TINYINT))
+        .put(Type.INT16, Types.optional(MinorType.SMALLINT))
         .put(Type.INT32, Types.optional(MinorType.INT))
-        .put(Type.INT8, Types.optional(MinorType.INT))
         .put(Type.INT64, Types.optional(MinorType.BIGINT))
         .put(Type.STRING, Types.optional(MinorType.VARCHAR))
         .put(Type.TIMESTAMP, Types.optional(MinorType.TIMESTAMP))
@@ -217,13 +217,11 @@ public class KuduRecordReader extends AbstractRecordReader {
     throw new IllegalArgumentException("Unknown how to handle vector.");
   }
   
-
   private abstract class Copier<T extends ValueVector.Mutator> {
     protected final int columnIndex;
     protected final T mutator;
 
     public Copier(int columnIndex, T mutator) {
-      super();
       this.columnIndex = columnIndex;
       this.mutator = mutator;
     }
