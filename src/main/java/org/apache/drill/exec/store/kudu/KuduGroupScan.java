@@ -52,7 +52,6 @@ import org.apache.drill.exec.store.schedule.EndpointByteMap;
 import org.apache.drill.exec.store.schedule.EndpointByteMapImpl;
 import org.kududb.client.LocatedTablet;
 import org.kududb.client.LocatedTablet.Replica;
-import org.kududb.mapreduce.KuduTableInputFormat;
 
 @JsonTypeName("kudu-scan")
 public class KuduGroupScan extends AbstractGroupScan {
