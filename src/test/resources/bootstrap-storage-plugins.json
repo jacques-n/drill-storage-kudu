@@ -3,7 +3,7 @@
     kudu : {
       type:"kudu",
       masterAddresses: "172.31.1.99",
-      enabled: false
+      enabled: true
     }
   }
 }
