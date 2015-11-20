@@ -77,8 +77,6 @@ public class KuduRecordReader extends AbstractRecordReader {
   private RowResultIterator iterator;
   
   private OutputMutator output;
-  private ImmutableList<ValueVector> vectors;
-  private ImmutableList<Copier<?>> copiers;
   private OperatorContext context;
 
   private static class ProjectedColumnInfo {
