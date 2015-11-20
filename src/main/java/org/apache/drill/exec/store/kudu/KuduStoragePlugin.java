@@ -83,6 +83,11 @@ public class KuduStoragePlugin extends AbstractStoragePlugin {
   }
 
   @Override
+  public boolean supportsWrite() {
+    return true;
+  }
+
+  @Override
   public void registerSchemas(SchemaConfig schemaConfig, SchemaPlus parent) throws IOException {
     schemaFactory.registerSchemas(schemaConfig, parent);
   }
